@@ -15,10 +15,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from swiftdet.losses import DetectionLoss
 from swiftdet.losses.distill import FeatureDistillLoss, LogitDistillLoss
-from swiftdet.losses.dfl import BboxLoss
-from swiftdet.losses.focal import VarifocalLoss
-from swiftdet.utils.assigner import TaskAlignedAssigner
 from swiftdet.utils.ema import ModelEMA
 
 
@@ -113,10 +111,11 @@ class DistillationTrainer:
         else:
             self.device = torch.device(device)
 
-        # Detection losses
-        self.cls_loss_fn = VarifocalLoss()
-        self.box_loss_fn = BboxLoss(reg_max=student.reg_max)
-        self.assigner = TaskAlignedAssigner(topk=13, alpha=1.0, beta=6.0)
+        # Detection loss (shared, tested implementation)
+        self.loss_fn = DetectionLoss(
+            nc=student.nc, reg_max=student.reg_max,
+            cls_gain=cls_gain, box_gain=box_gain, dfl_gain=dfl_gain,
+        )
 
         # Auto gradient accumulation targeting nominal batch of 64
         self.grad_accum = max(1, 64 // batch_size)
@@ -198,73 +197,36 @@ class DistillationTrainer:
                 pg["momentum"] = 0.8 * (1.0 - xi) + self.momentum * xi
 
     def _compute_detection_loss(self, outputs, targets):
-        """Compute the standard detection loss for the student.
-
-        Uses the same loss formulation as DetectionTrainer: Varifocal Loss for
-        classification, CIoU + DFL for box regression, with task-aligned assignment.
+        """Compute detection loss using the shared DetectionLoss module.
 
         Args:
             outputs: Dict from student model forward pass.
-            targets: Ground truth tensor (B, max_gt, 5).
+            targets: (B, max_gt, 5) tensor [cls, x1, y1, x2, y2].
 
         Returns:
-            Tuple of (total_loss, loss_dict).
+            Tuple of (total_loss, loss_dict, fg_mask).
         """
-        cls_raw = outputs["cls"]
-        box_dist = outputs["box_dist"]
-        box_decoded = outputs["box_decoded"]
+        total_loss, loss_dict = self.loss_fn(outputs, targets)
+
+        # Extract fg_mask for logit distillation weighting
+        # Re-run assignment to get fg_mask (lightweight, no grad)
+        cls_scores = outputs["cls"].detach().sigmoid()
+        pred_boxes = outputs["box_decoded"].detach()
         anchors = outputs["anchors"]
-        strides = outputs["strides"]
-
-        B, N, nc = cls_raw.shape
-        device = cls_raw.device
-
         gt_labels = targets[:, :, 0:1].long()
         gt_bboxes = targets[:, :, 1:5]
         mask_gt = (gt_bboxes.sum(dim=-1, keepdim=True) > 0).float()
-
-        cls_scores_for_assign = cls_raw.detach().sigmoid()
-        target_labels, target_bboxes, target_scores, fg_mask = self.assigner.forward(
-            cls_scores=cls_scores_for_assign,
-            bbox_preds=box_decoded.detach(),
-            anchor_points=anchors,
-            gt_labels=gt_labels,
-            gt_bboxes=gt_bboxes,
-            mask_gt=mask_gt,
+        _, _, _, fg_mask = self.loss_fn.assigner.forward(
+            cls_scores, pred_boxes, anchors, gt_labels, gt_bboxes, mask_gt,
         )
 
-        target_scores_sum = target_scores.sum().clamp(min=1.0)
-
-        cls_loss = self.cls_loss_fn(cls_raw, target_scores) / target_scores_sum
-
-        if fg_mask.any():
-            iou_loss, dfl_loss = self.box_loss_fn(
-                pred_dist=box_dist,
-                pred_bboxes=box_decoded,
-                anchor_points=anchors,
-                target_bboxes=target_bboxes,
-                target_scores=target_scores,
-                target_scores_sum=target_scores_sum,
-                fg_mask=fg_mask,
-                stride_tensor=strides,
-            )
-        else:
-            iou_loss = torch.tensor(0.0, device=device)
-            dfl_loss = torch.tensor(0.0, device=device)
-
-        total_loss = (
-            self.cls_gain * cls_loss
-            + self.box_gain * iou_loss
-            + self.dfl_gain * dfl_loss
-        )
-
-        loss_dict = {
-            "cls_loss": cls_loss.detach().item(),
-            "box_loss": iou_loss.detach().item(),
-            "dfl_loss": dfl_loss.detach().item(),
+        loss_dict_items = {
+            "cls_loss": loss_dict["cls"].item(),
+            "box_loss": loss_dict["box"].item(),
+            "dfl_loss": loss_dict["dfl"].item(),
         }
 
-        return total_loss, loss_dict, fg_mask
+        return total_loss, loss_dict_items, fg_mask
 
     def _forward_with_features(self, model, images):
         """Run model forward pass and capture intermediate neck features.
@@ -300,9 +262,10 @@ class DistillationTrainer:
 
         os.makedirs(self.save_dir, exist_ok=True)
 
-        # Move models to device
+        # Move models and loss to device
         student = self.student.to(self.device)
         teacher = self.teacher.to(self.device)
+        self.loss_fn = self.loss_fn.to(self.device)
 
         # Freeze teacher
         self._freeze_teacher()

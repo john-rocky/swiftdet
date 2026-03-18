@@ -20,9 +20,7 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
-from swiftdet.losses.dfl import BboxLoss
-from swiftdet.losses.focal import VarifocalLoss
-from swiftdet.utils.assigner import TaskAlignedAssigner
+from swiftdet.losses import DetectionLoss
 from swiftdet.utils.ema import ModelEMA
 
 
@@ -107,9 +105,10 @@ class DetectionTrainer:
         self.dfl_gain = dfl_gain
         self.label_smoothing = label_smoothing
         self.resume = resume
-        self.cls_loss_fn = VarifocalLoss()
-        self.box_loss_fn = BboxLoss(reg_max=model.reg_max)
-        self.assigner = TaskAlignedAssigner(topk=13, alpha=1.0, beta=6.0)
+        self.loss_fn = DetectionLoss(
+            nc=model.nc, reg_max=model.reg_max,
+            cls_gain=cls_gain, box_gain=box_gain, dfl_gain=dfl_gain,
+        )
 
         # Auto-compute gradient accumulation: target nominal batch = 64
         nominal_batch = 64
@@ -215,95 +214,21 @@ class DetectionTrainer:
                 pg["momentum"] = 0.8 * (1.0 - xi) + self.momentum * xi
 
     def _compute_loss(self, outputs, targets):
-        """Compute the combined detection loss.
-
-        The detection loss consists of three components:
-        1. Classification loss (Varifocal Loss, Zhang et al. 2021)
-        2. Box regression loss (CIoU, Zheng et al. 2019)
-        3. Distribution focal loss (Li et al. 2020)
-
-        Target assignment uses the task-aligned assigner (Feng et al. 2021).
+        """Compute detection loss using the shared DetectionLoss module.
 
         Args:
-            outputs: Dict from model forward pass with keys:
-                'cls', 'box_dist', 'box_decoded', 'anchors', 'strides'.
-            targets: Tensor of shape (B, max_gt, 5) where each row is
-                [class_id, x1, y1, x2, y2] with zero-padding for missing GTs.
+            outputs: Dict from model forward pass.
+            targets: (B, max_gt, 5) tensor [cls, x1, y1, x2, y2].
 
         Returns:
-            Tuple of (total_loss, loss_dict) where loss_dict contains the
-            individual loss components for logging.
+            Tuple of (total_loss, loss_dict).
         """
-        cls_raw = outputs["cls"]  # (B, N, nc)
-        box_dist = outputs["box_dist"]  # (B, N, 4*reg_max)
-        box_decoded = outputs["box_decoded"]  # (B, N, 4)
-        anchors = outputs["anchors"]  # (N, 2)
-        strides = outputs["strides"]  # (N, 1)
-
-        B, N, nc = cls_raw.shape
-        device = cls_raw.device
-
-        # Parse targets into gt_labels (B, max_gt, 1) and gt_bboxes (B, max_gt, 4)
-        gt_labels = targets[:, :, 0:1].long()  # (B, max_gt, 1)
-        gt_bboxes = targets[:, :, 1:5]  # (B, max_gt, 4)
-
-        # Validity mask: non-zero boxes indicate real ground truths
-        mask_gt = (gt_bboxes.sum(dim=-1, keepdim=True) > 0).float()  # (B, max_gt, 1)
-
-        # Run task-aligned assigner to match predictions to ground truths
-        cls_scores_for_assign = cls_raw.detach().sigmoid()
-        target_labels, target_bboxes, target_scores, fg_mask = self.assigner.forward(
-            cls_scores=cls_scores_for_assign,
-            bbox_preds=box_decoded.detach(),
-            anchor_points=anchors,
-            gt_labels=gt_labels,
-            gt_bboxes=gt_bboxes,
-            mask_gt=mask_gt,
-        )
-
-        # Normalize target_scores sum for loss weighting
-        target_scores_sum = target_scores.sum().clamp(min=1.0)
-
-        # --- Classification Loss (Varifocal Loss) ---
-        if self.label_smoothing > 0:
-            target_scores = target_scores * (1.0 - self.label_smoothing) + (
-                self.label_smoothing / nc
-            )
-
-        cls_loss = self.cls_loss_fn(cls_raw, target_scores)
-        cls_loss = cls_loss / target_scores_sum
-
-        # --- Box Regression Loss (CIoU + DFL) ---
-        if fg_mask.any():
-            iou_loss, dfl_loss = self.box_loss_fn(
-                pred_dist=box_dist,
-                pred_bboxes=box_decoded,
-                anchor_points=anchors,
-                target_bboxes=target_bboxes,
-                target_scores=target_scores,
-                target_scores_sum=target_scores_sum,
-                fg_mask=fg_mask,
-                stride_tensor=strides,
-            )
-        else:
-            iou_loss = torch.tensor(0.0, device=device)
-            dfl_loss = torch.tensor(0.0, device=device)
-
-        # Weighted combination
-        total_loss = (
-            self.cls_gain * cls_loss
-            + self.box_gain * iou_loss
-            + self.dfl_gain * dfl_loss
-        )
-
-        loss_dict = {
-            "cls_loss": cls_loss.detach().item(),
-            "box_loss": iou_loss.detach().item(),
-            "dfl_loss": dfl_loss.detach().item(),
-            "total_loss": total_loss.detach().item(),
+        total_loss, loss_dict = self.loss_fn(outputs, targets)
+        return total_loss, {
+            "cls_loss": loss_dict["cls"].item(),
+            "box_loss": loss_dict["box"].item(),
+            "dfl_loss": loss_dict["dfl"].item(),
         }
-
-        return total_loss, loss_dict
 
     def train(self):
         """Run the full training loop.
@@ -320,8 +245,9 @@ class DetectionTrainer:
 
         os.makedirs(self.save_dir, exist_ok=True)
 
-        # Move model to device
+        # Move model and loss to device
         model = self.model.to(self.device)
+        self.loss_fn = self.loss_fn.to(self.device)
         model.train()
 
         # Build optimizer and EMA
