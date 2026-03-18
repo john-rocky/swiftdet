@@ -189,8 +189,34 @@ class APMetrics:
         # mAP@0.50:0.95 is the mean over all thresholds
         map50_95 = float(mean_ap_per_threshold.mean())
 
+        # Compute overall precision and recall at IoU=0.50
+        precision, recall = self._compute_precision_recall()
+
         return {
             "mAP50": map50,
             "mAP50_95": map50_95,
+            "precision": precision,
+            "recall": recall,
             "ap_per_class": ap_per_class,
         }
+
+    def _compute_precision_recall(self):
+        """Compute mean precision and recall at IoU=0.50 across all classes.
+
+        Returns:
+            (precision, recall) tuple of floats.
+        """
+        total_tp = 0
+        total_fp = 0
+        total_gt = int(self._n_gt.sum())
+
+        for c in range(self.nc):
+            for score, tp_flags in self._detections[c]:
+                if tp_flags[0]:  # IoU=0.50 is index 0
+                    total_tp += 1
+                else:
+                    total_fp += 1
+
+        precision = total_tp / max(total_tp + total_fp, 1)
+        recall = total_tp / max(total_gt, 1)
+        return precision, recall

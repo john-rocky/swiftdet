@@ -329,7 +329,8 @@ class DetectionTrainer:
         csv_path = self.save_dir / "results.csv"
         csv_columns = [
             "epoch", "train/cls_loss", "train/box_loss", "train/dfl_loss",
-            "val/mAP50", "val/mAP50_95", "lr", "epoch_time",
+            "val/precision", "val/recall", "val/mAP50", "val/mAP50_95",
+            "lr", "epoch_time",
         ]
         # Write header (or append if resuming)
         write_header = not (self.resume and csv_path.exists())
@@ -424,10 +425,9 @@ class DetectionTrainer:
 
             elapsed = time.time() - t_start
 
-            # --- Validation ---
+            # --- Validation (every epoch) ---
             metrics = {}
-            do_val = (epoch + 1) % 10 == 0 or (epoch + 1) == self.epochs
-            if do_val:
+            if True:
                 evaluator.model = ema.ema_model
                 metrics = evaluator.evaluate()
 
@@ -468,7 +468,9 @@ class DetectionTrainer:
             )
             if metrics:
                 msg += (
-                    f" | mAP50={metrics.get('mAP50', 0.0):.4f}"
+                    f" | P={metrics.get('precision', 0.0):.4f}"
+                    f" R={metrics.get('recall', 0.0):.4f}"
+                    f" mAP50={metrics.get('mAP50', 0.0):.4f}"
                     f" mAP50-95={metrics.get('mAP50_95', 0.0):.4f}"
                 )
             print(msg)
@@ -479,6 +481,8 @@ class DetectionTrainer:
                 "train/cls_loss": f"{epoch_losses['cls_loss']:.6f}",
                 "train/box_loss": f"{epoch_losses['box_loss']:.6f}",
                 "train/dfl_loss": f"{epoch_losses['dfl_loss']:.6f}",
+                "val/precision": f"{metrics.get('precision', 0.0):.6f}",
+                "val/recall": f"{metrics.get('recall', 0.0):.6f}",
                 "val/mAP50": f"{metrics.get('mAP50', 0.0):.6f}",
                 "val/mAP50_95": f"{metrics.get('mAP50_95', 0.0):.6f}",
                 "lr": f"{lr_current:.8f}",
@@ -520,7 +524,7 @@ class DetectionTrainer:
 
         # Read CSV
         epochs, cls_loss, box_loss, dfl_loss = [], [], [], []
-        mAP50, mAP50_95, lrs = [], [], []
+        precisions, recalls, mAP50, mAP50_95, lrs = [], [], [], [], []
 
         with open(csv_path, "r") as f:
             reader = csv.DictReader(f)
@@ -529,6 +533,8 @@ class DetectionTrainer:
                 cls_loss.append(float(row["train/cls_loss"]))
                 box_loss.append(float(row["train/box_loss"]))
                 dfl_loss.append(float(row["train/dfl_loss"]))
+                precisions.append(float(row.get("val/precision", 0)))
+                recalls.append(float(row.get("val/recall", 0)))
                 mAP50.append(float(row["val/mAP50"]))
                 mAP50_95.append(float(row["val/mAP50_95"]))
                 lrs.append(float(row["lr"]))
@@ -536,17 +542,19 @@ class DetectionTrainer:
         if not epochs:
             return
 
-        # --- Multi-panel results plot ---
-        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        # --- Multi-panel results plot (2x4) ---
+        fig, axes = plt.subplots(2, 4, figsize=(24, 10))
         fig.suptitle("SwiftDet Training Results", fontsize=14, fontweight="bold")
 
         panels = [
             (axes[0, 0], cls_loss, "train/cls_loss", "steelblue"),
             (axes[0, 1], box_loss, "train/box_loss", "darkorange"),
             (axes[0, 2], dfl_loss, "train/dfl_loss", "forestgreen"),
-            (axes[1, 0], mAP50, "val/mAP50", "crimson"),
-            (axes[1, 1], mAP50_95, "val/mAP50-95", "purple"),
-            (axes[1, 2], lrs, "lr", "gray"),
+            (axes[0, 3], lrs, "lr", "gray"),
+            (axes[1, 0], precisions, "val/precision", "teal"),
+            (axes[1, 1], recalls, "val/recall", "coral"),
+            (axes[1, 2], mAP50, "val/mAP50", "crimson"),
+            (axes[1, 3], mAP50_95, "val/mAP50-95", "purple"),
         ]
 
         for ax, data, title, color in panels:
