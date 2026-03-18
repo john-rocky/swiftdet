@@ -179,8 +179,25 @@ class COCODetectionDataset(Dataset):
         if len(self.img_paths) == 0:
             raise RuntimeError(f"No images found in {self.img_dir}")
 
+        # Resolve label directory
+        # Supports two layouts:
+        #   1. path/images/train2017/ + path/labels/train2017/  (YAML: train: images/train2017)
+        #   2. path/train2017/        + path/labels/train2017/  (YAML: train: train2017)
+        split_dir_str = str(split_dir)
+        if split_dir_str.startswith("images/") or split_dir_str.startswith("images\\"):
+            label_rel = split_dir_str.replace("images/", "labels/", 1).replace("images\\", "labels\\", 1)
+        else:
+            label_rel = "labels/" + split_dir_str
+        self.label_dir = base_path / label_rel
+
         # Generate corresponding label paths
-        self.label_paths = [_img_to_label_path(p) for p in self.img_paths]
+        self.label_paths = [
+            str(self.label_dir / (Path(p).stem + ".txt")) for p in self.img_paths
+        ]
+
+        # Warn if no labels found
+        found = sum(1 for lp in self.label_paths if os.path.exists(lp))
+        print(f"  Labels: {found}/{len(self.img_paths)} found in {self.label_dir}")
 
         # Settings
         self.img_size = img_size
