@@ -97,23 +97,10 @@ class TaskAlignedAssigner:
         # --- Step 3: Compute alignment metric ---
         # Gather classification scores for the GT class of each GT
         gt_labels_long = gt_labels.squeeze(-1).long()  # (B, max_gt)
-        # Expand cls_scores: (B, N, nc) -> gather scores for each GT class
-        # Result shape: (B, N, max_gt)
-        gt_labels_expanded = gt_labels_long[:, None, :].expand(B, N, max_gt)  # (B, N, max_gt)
-        # For each (batch, anchor, gt), get the cls score for that gt's class
-        cls_scores_for_gt = cls_scores.gather(
-            2,
-            gt_labels_expanded.clamp(0, nc - 1),
-        )  # (B, N, max_gt) -- but this gathers wrong dim
-
-        # Actually we need: for each anchor, for each GT, the predicted score of that GT's class
-        # cls_scores: (B, N, nc), gt_labels: (B, max_gt, 1)
-        # Expand gt_labels to (B, N, max_gt) to index into nc dimension
-        batch_cls = torch.zeros(B, N, max_gt, device=device)
-        for b in range(B):
-            for g in range(max_gt):
-                c = gt_labels_long[b, g].clamp(0, nc - 1)
-                batch_cls[b, :, g] = cls_scores[b, :, c]
+        # For each (batch, anchor, gt), gather the cls score for that GT's class
+        # cls_scores: (B, N, nc) -> index with gt_labels to get (B, N, max_gt)
+        gt_cls_idx = gt_labels_long[:, None, :].expand(B, N, max_gt).clamp(0, nc - 1)
+        batch_cls = cls_scores.gather(2, gt_cls_idx)  # (B, N, max_gt)
 
         # alignment_metric = cls_score^alpha * iou^beta
         alignment_metric = batch_cls.pow(self.alpha) * ious.pow(self.beta)  # (B, N, max_gt)
@@ -176,19 +163,24 @@ class TaskAlignedAssigner:
             target_labels[b][fg] = gt_labels_long[b][gt_idx]
             target_bboxes[b][fg] = gt_bboxes[b][gt_idx]
 
-            # Soft targets: scale one-hot by normalized alignment metric
-            # Get alignment metric for the assigned GT
+            # Soft targets: scale one-hot by normalized alignment metric * max IoU
+            # YOLOv8-style: norm = (am / max_am_per_gt) * max_iou_per_gt
             fg_indices = fg.nonzero(as_tuple=False).squeeze(-1)
             am_values = alignment_metric[b][fg_indices, gt_idx]  # (N_fg,)
+            iou_values = ious[b][fg_indices, gt_idx]  # (N_fg,)
 
-            # Normalize alignment metric per GT for soft targets
-            # For each assigned GT, normalize across its assigned anchors
             one_hot = F.one_hot(target_labels[b][fg], nc).float()  # (N_fg, nc)
 
-            # Normalize: per-GT normalization of alignment metric
-            am_max = am_values.max().clamp(min=1e-7)
-            normalized_am = am_values / am_max  # (N_fg,)
+            # Per-GT normalization: scatter_reduce to get max AM and max IoU per GT
+            max_am_per_gt = torch.zeros(max_gt, device=device)
+            max_iou_per_gt = torch.zeros(max_gt, device=device)
+            max_am_per_gt.scatter_reduce_(0, gt_idx, am_values, reduce='amax')
+            max_iou_per_gt.scatter_reduce_(0, gt_idx, iou_values, reduce='amax')
 
-            target_scores[b][fg] = one_hot * normalized_am.unsqueeze(-1)
+            am_max_gathered = max_am_per_gt[gt_idx].clamp(min=1e-7)
+            iou_max_gathered = max_iou_per_gt[gt_idx].clamp(min=1e-7)
+
+            norm_am = (am_values / am_max_gathered) * iou_max_gathered
+            target_scores[b][fg] = one_hot * norm_am.unsqueeze(-1)
 
         return target_labels, target_bboxes, target_scores, fg_mask

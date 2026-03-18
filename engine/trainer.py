@@ -390,6 +390,12 @@ class DetectionTrainer:
                     loss, loss_dict = self._compute_loss(outputs, targets)
                     loss = loss / self.grad_accum
 
+                # Skip non-finite losses to prevent training collapse
+                if not torch.isfinite(loss):
+                    print(f"  WARNING: Non-finite loss at epoch {epoch+1}, batch {batch_idx+1}. Skipping.")
+                    optimizer.zero_grad()
+                    continue
+
                 # Backward pass with gradient scaling
                 scaler.scale(loss).backward()
 

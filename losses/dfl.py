@@ -94,7 +94,7 @@ class DFLoss(nn.Module):
         # Weighted combination
         loss = weight_left * loss_left + weight_right * loss_right
 
-        return loss.mean()
+        return loss.mean(dim=-1)  # (N,) per-sample loss for per-anchor weighting
 
 
 class BboxLoss(nn.Module):
@@ -167,8 +167,7 @@ class BboxLoss(nn.Module):
         fg_pred_dist = pred_dist[fg_mask]  # (n_pos, 4*reg_max)
         fg_pred_dist = fg_pred_dist.view(-1, 4, self.reg_max)  # (n_pos, 4, reg_max)
 
-        loss_dfl = self.dfl_loss(fg_pred_dist, target_dist)
-        # Weight DFL by target scores (same as IoU loss weighting)
-        loss_dfl = loss_dfl * weight.sum() / target_scores_sum
+        loss_dfl_per_anchor = self.dfl_loss(fg_pred_dist, target_dist)  # (n_pos,)
+        loss_dfl = (loss_dfl_per_anchor * weight.squeeze(-1)).sum() / target_scores_sum
 
         return loss_iou, loss_dfl
