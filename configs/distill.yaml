@@ -1,0 +1,17 @@
+# Knowledge Distillation configuration
+# Train a small student model using a larger teacher's soft targets.
+
+distill:
+  teacher: swiftdet-l
+  student: swiftdet-n
+  epochs: 200
+  feature_weight: 0.5
+  logit_weight: 0.5
+  temperature: 4.0
+
+  # Base training params (overridable via CLI)
+  batch_size: 64
+  img_size: 640
+  lr0: 0.005
+  optimizer: sgd
+  amp: true

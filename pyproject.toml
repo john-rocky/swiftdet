@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "swiftdet"
+version = "0.1.0"
+description = "Fast and accurate object detection library"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "numpy>=1.23",
+    "opencv-python>=4.6",
+    "pyyaml>=6.0",
+    "matplotlib>=3.5",
+    "tqdm>=4.64",
+]
+
+[project.optional-dependencies]
+export = ["coremltools>=7.0", "onnx>=1.14", "onnxsim>=0.4"]
+dev = ["pytest>=7.0", "ruff>=0.1"]
+
+[project.scripts]
+swiftdet = "swiftdet.core.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["swiftdet*"]
