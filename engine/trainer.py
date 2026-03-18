@@ -425,9 +425,10 @@ class DetectionTrainer:
 
             elapsed = time.time() - t_start
 
-            # --- Validation (every epoch) ---
+            # --- Validation ---
             metrics = {}
-            if True:
+            do_val = (epoch + 1) % 5 == 0 or (epoch + 1) == self.epochs
+            if do_val:
                 evaluator.model = ema.ema_model
                 metrics = evaluator.evaluate()
 
