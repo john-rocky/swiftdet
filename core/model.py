@@ -23,6 +23,10 @@ _VARIANT_CONFIGS = {
     "swiftdet-s": "swiftdet_s.yaml",
     "swiftdet-m": "swiftdet_m.yaml",
     "swiftdet-l": "swiftdet_l.yaml",
+    "swiftdet2-n": "swiftdet2_n.yaml",
+    "swiftdet2-s": "swiftdet2_s.yaml",
+    "swiftdet2-m": "swiftdet2_m.yaml",
+    "swiftdet2-l": "swiftdet2_l.yaml",
 }
 
 
@@ -197,13 +201,18 @@ class SwiftDet:
 
     def _build_model(self):
         """Construct network from self.cfg."""
-        from ..models.detector import build_swiftdet
-
         model_cfg = self.cfg.get("model", self.cfg)
+        version = model_cfg.get("version", 1)
         variant = model_cfg.get("variant", "n")
         nc = model_cfg.get("nc", 80)
         reg_max = model_cfg.get("reg_max", 16)
-        self.model = build_swiftdet(variant=variant, nc=nc, reg_max=reg_max)
+
+        if version == 2:
+            from ..models.detector import build_swiftdet2
+            self.model = build_swiftdet2(variant=variant, nc=nc, reg_max=reg_max)
+        else:
+            from ..models.detector import build_swiftdet
+            self.model = build_swiftdet(variant=variant, nc=nc, reg_max=reg_max)
         if not self.names:
             self.names = {i: str(i) for i in range(nc)}
 

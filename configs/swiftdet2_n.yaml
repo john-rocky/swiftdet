@@ -1,0 +1,48 @@
+# SwiftDet2-Nano configuration
+# Smallest variant -- optimized for edge / mobile deployment.
+
+model:
+  version: 2
+  variant: n
+  nc: 80
+  width_mult: 0.30
+  depth_mult: 0.33
+  max_channels: 512
+  neck_channels: 128
+  reg_max: 16
+
+train:
+  epochs: 500
+  batch_size: 64
+  img_size: 640
+  lr0: 0.01
+  lrf: 0.01
+  optimizer: sgd
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 5
+  warmup_bias_lr: 0.1
+  close_mosaic: 15
+  amp: true
+  label_smoothing: 0.0
+
+augment:
+  mosaic: 1.0
+  mosaic9_prob: 0.2
+  mixup: 0.15
+  copy_paste: 0.1
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 0.0
+  translate: 0.2
+  scale: 0.9
+  shear: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  erasing: 0.4
+
+loss:
+  cls_gain: 0.5
+  box_gain: 7.5
+  dfl_gain: 1.5

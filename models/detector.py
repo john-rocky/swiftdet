@@ -5,14 +5,19 @@ References:
     - BiFPN neck: Tan et al. 2020 (EfficientDet)
     - Decoupled head: Ge et al. 2021 (YOLOX)
     - DFL: Li et al. 2020 (Generalized Focal Loss)
+    - GELAN / YOLOv9: Wang et al. 2024 (Programmable Gradient Information)
+    - RepVGG: Ding et al. 2021 (Re-parameterizable VGG)
 """
 
 import torch.nn as nn
 
 from .backbone import CSPBackbone
+from .backbone_v2 import ModernBackbone
 from .blocks import ConvBnAct
+from .blocks_v2 import RepConv
 from .head import DetectionHead
 from .neck import BiFPNLite
+from .neck_v2 import GELANNeck
 
 
 # Variant configurations: (width_mult, depth_mult, max_channels, neck_channels)
@@ -176,3 +181,132 @@ def build_swiftdet(variant="n", nc=80, reg_max=16):
         )
     config = {**VARIANT_CONFIGS[variant], "nc": nc, "reg_max": reg_max}
     return SwiftDetector(config)
+
+
+# ---------------------------------------------------------------------------
+# SwiftDet2: ModernBackbone + GELANNeck + DetectionHead
+# ---------------------------------------------------------------------------
+
+VARIANT_CONFIGS_V2 = {
+    "n": {"width_mult": 0.30, "depth_mult": 0.33, "max_ch": 512, "neck_ch": 128},
+    "s": {"width_mult": 0.50, "depth_mult": 0.33, "max_ch": 512, "neck_ch": 192},
+    "m": {"width_mult": 0.75, "depth_mult": 0.67, "max_ch": 768, "neck_ch": 256},
+    "l": {"width_mult": 1.00, "depth_mult": 1.00, "max_ch": 1024, "neck_ch": 384},
+}
+
+
+class SwiftDet2Detector(nn.Module):
+    """SwiftDet2 detector: ModernBackbone + GELANNeck + DetectionHead.
+
+    Second-generation detector using re-parameterizable convolutions in
+    the backbone and GELAN-inspired multi-gradient-path aggregation in
+    the neck for improved training dynamics and inference efficiency.
+
+    Args:
+        config: Model configuration dictionary with keys:
+            - width_mult (float): Backbone channel multiplier.
+            - depth_mult (float): Backbone depth multiplier.
+            - max_ch (int): Maximum backbone channel count.
+            - neck_ch (int): Unified channel width in the neck.
+            - nc (int): Number of object classes.
+            - reg_max (int): Number of DFL bins.
+    """
+
+    def __init__(self, config=None):
+        super().__init__()
+
+        if config is None:
+            config = {**VARIANT_CONFIGS_V2["n"], "nc": 80, "reg_max": 16}
+
+        nc = config.get("nc", 80)
+        reg_max = config.get("reg_max", 16)
+        neck_ch = config["neck_ch"]
+
+        # Backbone: ModernBackbone with RepConv blocks
+        self.backbone = ModernBackbone(
+            width_mult=config["width_mult"],
+            depth_mult=config["depth_mult"],
+            max_channels=config["max_ch"],
+        )
+
+        # Neck: GELAN-inspired aggregation
+        self.neck = GELANNeck(
+            in_channels=self.backbone.out_channels,
+            out_channels=neck_ch,
+        )
+
+        # Head: reuse v1 DFL-based decoupled head
+        head_in_channels = [neck_ch] * len(self.backbone.out_channels)
+        self.head = DetectionHead(
+            nc=nc,
+            in_channels=head_in_channels,
+            reg_max=reg_max,
+        )
+
+        self.nc = nc
+        self.reg_max = reg_max
+
+    def forward(self, x):
+        """Run full detection pipeline.
+
+        Args:
+            x: Input image tensor of shape (B, 3, H, W).
+
+        Returns:
+            Dictionary containing:
+                cls: Raw classification logits (B, N_total, nc).
+                box_dist: Raw box distributions (B, N_total, 4*reg_max).
+                box_decoded: Decoded (x1, y1, x2, y2) boxes (B, N_total, 4).
+                anchors: Anchor center points (N_total, 2).
+                strides: Stride per anchor (N_total, 1).
+        """
+        features = self.backbone(x)
+        fused = self.neck(features)
+        return self.head(fused)
+
+    def fuse(self):
+        """Fuse RepConv multi-branch blocks and Conv+BN layers for inference.
+
+        Performs two types of fusion:
+        1. RepConv blocks: collapse multi-branch (3x3 + 1x1 + identity) into
+           a single 3x3 convolution.
+        2. ConvBnAct blocks: fold BatchNorm parameters into Conv2d weights.
+
+        Returns:
+            self (for method chaining).
+        """
+        # First fuse RepConv blocks (must come before Conv+BN fusion)
+        for module in self.modules():
+            if isinstance(module, RepConv) and not module._fused:
+                module.fuse()
+
+        # Then fuse Conv+BN in ConvBnAct blocks
+        for module in self.modules():
+            if isinstance(module, ConvBnAct) and hasattr(module, "bn"):
+                module.conv = _fuse_conv_bn(module.conv, module.bn)
+                module.bn = nn.Identity()
+                module.forward = module.forward_fuse
+        return self
+
+
+def build_swiftdet2(variant="n", nc=80, reg_max=16):
+    """Build a SwiftDet2 model from a variant name.
+
+    Args:
+        variant: Model size variant, one of "n" (nano), "s" (small),
+            "m" (medium), or "l" (large).
+        nc: Number of object classes (default 80 for COCO).
+        reg_max: Number of DFL distribution bins (default 16).
+
+    Returns:
+        SwiftDet2Detector model instance.
+
+    Raises:
+        ValueError: If variant is not recognized.
+    """
+    if variant not in VARIANT_CONFIGS_V2:
+        raise ValueError(
+            f"Unknown variant '{variant}'. Choose from: {list(VARIANT_CONFIGS_V2.keys())}"
+        )
+    config = {**VARIANT_CONFIGS_V2[variant], "nc": nc, "reg_max": reg_max}
+    return SwiftDet2Detector(config)
