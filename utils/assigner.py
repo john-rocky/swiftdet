@@ -89,10 +89,11 @@ class TaskAlignedAssigner:
 
         # --- Step 2: Compute IoU between predictions and GTs ---
         # bbox_preds: (B, N, 4), gt_bboxes: (B, max_gt, 4)
-        ious = torch.zeros(B, N, max_gt, device=device)
+        # Force float32 to prevent iou^beta underflow in AMP (float16)
+        ious = torch.zeros(B, N, max_gt, device=device, dtype=torch.float32)
         for b in range(B):
             if mask_gt[b].any():
-                ious[b] = box_iou(bbox_preds[b], gt_bboxes[b])  # (N, max_gt)
+                ious[b] = box_iou(bbox_preds[b].float(), gt_bboxes[b].float())  # (N, max_gt)
 
         # --- Step 3: Compute alignment metric ---
         # Gather classification scores for the GT class of each GT
@@ -100,9 +101,9 @@ class TaskAlignedAssigner:
         # For each (batch, anchor, gt), gather the cls score for that GT's class
         # cls_scores: (B, N, nc) -> index with gt_labels to get (B, N, max_gt)
         gt_cls_idx = gt_labels_long[:, None, :].expand(B, N, max_gt).clamp(0, nc - 1)
-        batch_cls = cls_scores.gather(2, gt_cls_idx)  # (B, N, max_gt)
+        batch_cls = cls_scores.float().gather(2, gt_cls_idx)  # (B, N, max_gt) float32
 
-        # alignment_metric = cls_score^alpha * iou^beta
+        # alignment_metric = cls_score^alpha * iou^beta (float32 to avoid underflow)
         alignment_metric = batch_cls.pow(self.alpha) * ious.pow(self.beta)  # (B, N, max_gt)
 
         # Mask out anchors not inside GT boxes and invalid GTs
