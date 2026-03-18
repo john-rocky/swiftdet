@@ -10,6 +10,7 @@
 import os
 
 import torch
+from tqdm import tqdm
 
 from swiftdet.utils.metrics import APMetrics
 from swiftdet.utils.nms import non_max_suppression
@@ -98,7 +99,7 @@ class DetectionEvaluator:
         ap_metrics = APMetrics(nc=nc)
 
         with torch.no_grad():
-            for images, targets in val_loader:
+            for images, targets in tqdm(val_loader, desc="Validating", bar_format="{l_bar}{bar:20}{r_bar}"):
                 images = images.to(self.device, non_blocking=True).float()
                 if images.max() > 1.0:
                     images = images / 255.0

@@ -18,6 +18,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from tqdm import tqdm
 
 from swiftdet.losses.dfl import BboxLoss
 from swiftdet.losses.focal import VarifocalLoss
@@ -386,7 +387,19 @@ class DetectionTrainer:
             t_start = time.time()
             optimizer.zero_grad()
 
-            for batch_idx, (images, targets) in enumerate(train_loader):
+            # Running averages for progress bar
+            running_cls = 0.0
+            running_box = 0.0
+            running_dfl = 0.0
+
+            pbar = tqdm(
+                enumerate(train_loader),
+                total=n_batches,
+                desc=f"Epoch {epoch + 1}/{self.epochs}",
+                bar_format="{l_bar}{bar:20}{r_bar}",
+            )
+
+            for batch_idx, (images, targets) in pbar:
                 # Apply warmup during initial epochs
                 self._warmup_lr_and_momentum(epoch, batch_idx, n_batches, optimizer)
 
@@ -398,7 +411,6 @@ class DetectionTrainer:
                 images = images.to(self.device, non_blocking=True).float()
                 if images.ndim == 3:
                     images = images.unsqueeze(0)
-                # Normalize to [0, 1] if pixel values are in [0, 255]
                 if images.max() > 1.0:
                     images = images / 255.0
 
@@ -408,7 +420,6 @@ class DetectionTrainer:
                 with torch.amp.autocast("cuda", enabled=use_amp):
                     outputs = model(images)
                     loss, loss_dict = self._compute_loss(outputs, targets)
-                    # Scale loss by gradient accumulation factor
                     loss = loss / self.grad_accum
 
                 # Backward pass with gradient scaling
@@ -421,13 +432,24 @@ class DetectionTrainer:
                     scaler.step(optimizer)
                     scaler.update()
                     optimizer.zero_grad()
-
-                    # EMA update after each optimizer step
                     ema.update(model)
 
-                # Accumulate epoch losses for logging
+                # Accumulate epoch losses
                 for k in epoch_losses:
                     epoch_losses[k] += loss_dict.get(k, 0.0)
+
+                # Update running averages and progress bar
+                n = batch_idx + 1
+                running_cls = epoch_losses["cls_loss"] / n
+                running_box = epoch_losses["box_loss"] / n
+                running_dfl = epoch_losses["dfl_loss"] / n
+                mem = f"{torch.cuda.memory_reserved(self.device) / 1e9:.1f}G" if self.device.type == "cuda" else ""
+                pbar.set_postfix_str(
+                    f"cls={running_cls:.4f} box={running_box:.4f} dfl={running_dfl:.4f} "
+                    f"lr={optimizer.param_groups[0]['lr']:.2e} {mem}"
+                )
+
+            pbar.close()
 
             # Average losses over batches
             for k in epoch_losses:
@@ -444,7 +466,6 @@ class DetectionTrainer:
 
                 current_map = metrics.get("mAP50_95", 0.0)
 
-                # Save best checkpoint
                 if current_map > best_map:
                     best_map = current_map
                     self.save_checkpoint(
@@ -470,15 +491,13 @@ class DetectionTrainer:
                 scaler=scaler,
             )
 
-            # Print progress
+            # Epoch summary
             lr_current = optimizer.param_groups[0]["lr"]
             msg = (
-                f"Epoch {epoch + 1}/{self.epochs} | "
-                f"cls={epoch_losses['cls_loss']:.4f} "
+                f"  >> cls={epoch_losses['cls_loss']:.4f} "
                 f"box={epoch_losses['box_loss']:.4f} "
                 f"dfl={epoch_losses['dfl_loss']:.4f} | "
-                f"lr={lr_current:.6f} | "
-                f"time={elapsed:.1f}s"
+                f"lr={lr_current:.6f} | {elapsed:.1f}s"
             )
             if metrics:
                 msg += (
