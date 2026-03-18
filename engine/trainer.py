@@ -10,6 +10,7 @@
 #   - Label smoothing: Szegedy et al. 2016, "Rethinking the Inception Architecture"
 #   - Linear warmup: Goyal et al. 2017, "Accurate, Large Minibatch SGD"
 
+import csv
 import math
 import os
 import time
@@ -324,6 +325,19 @@ class DetectionTrainer:
             print(f"  Resumed:        epoch {start_epoch}, best mAP={best_map:.4f}")
         print("=" * 60 + "\n")
 
+        # --- CSV Logger ---
+        csv_path = self.save_dir / "results.csv"
+        csv_columns = [
+            "epoch", "train/cls_loss", "train/box_loss", "train/dfl_loss",
+            "val/mAP50", "val/mAP50_95", "lr", "epoch_time",
+        ]
+        # Write header (or append if resuming)
+        write_header = not (self.resume and csv_path.exists())
+        csv_file = open(csv_path, "a" if not write_header else "w", newline="")
+        csv_writer = csv.DictWriter(csv_file, fieldnames=csv_columns)
+        if write_header:
+            csv_writer.writeheader()
+
         # --- Main Training Loop ---
         for epoch in range(start_epoch, self.epochs):
             model.train()
@@ -459,8 +473,99 @@ class DetectionTrainer:
                 )
             print(msg)
 
+            # --- Log to CSV ---
+            csv_writer.writerow({
+                "epoch": epoch + 1,
+                "train/cls_loss": f"{epoch_losses['cls_loss']:.6f}",
+                "train/box_loss": f"{epoch_losses['box_loss']:.6f}",
+                "train/dfl_loss": f"{epoch_losses['dfl_loss']:.6f}",
+                "val/mAP50": f"{metrics.get('mAP50', 0.0):.6f}",
+                "val/mAP50_95": f"{metrics.get('mAP50_95', 0.0):.6f}",
+                "lr": f"{lr_current:.8f}",
+                "epoch_time": f"{elapsed:.1f}",
+            })
+            csv_file.flush()
+
+        csv_file.close()
+
+        # --- Plot training curves ---
+        self._plot_results(self.save_dir / "results.csv", self.save_dir)
+
         print(f"Training complete. Best mAP50-95: {best_map:.4f}")
+        print(f"Results saved to {self.save_dir}")
         return metrics
+
+    @staticmethod
+    def _plot_results(csv_path, save_dir):
+        """Generate training curve plots from results CSV.
+
+        Creates two plot files:
+        - results.png: multi-panel plot with all metrics
+        - loss.png: training losses only
+
+        Args:
+            csv_path: Path to results.csv.
+            save_dir: Directory to save plot images.
+        """
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except ImportError:
+            print("matplotlib not installed, skipping plots")
+            return
+
+        if not csv_path.exists():
+            return
+
+        # Read CSV
+        epochs, cls_loss, box_loss, dfl_loss = [], [], [], []
+        mAP50, mAP50_95, lrs = [], [], []
+
+        with open(csv_path, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                epochs.append(int(row["epoch"]))
+                cls_loss.append(float(row["train/cls_loss"]))
+                box_loss.append(float(row["train/box_loss"]))
+                dfl_loss.append(float(row["train/dfl_loss"]))
+                mAP50.append(float(row["val/mAP50"]))
+                mAP50_95.append(float(row["val/mAP50_95"]))
+                lrs.append(float(row["lr"]))
+
+        if not epochs:
+            return
+
+        # --- Multi-panel results plot ---
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        fig.suptitle("SwiftDet Training Results", fontsize=14, fontweight="bold")
+
+        panels = [
+            (axes[0, 0], cls_loss, "train/cls_loss", "steelblue"),
+            (axes[0, 1], box_loss, "train/box_loss", "darkorange"),
+            (axes[0, 2], dfl_loss, "train/dfl_loss", "forestgreen"),
+            (axes[1, 0], mAP50, "val/mAP50", "crimson"),
+            (axes[1, 1], mAP50_95, "val/mAP50-95", "purple"),
+            (axes[1, 2], lrs, "lr", "gray"),
+        ]
+
+        for ax, data, title, color in panels:
+            ax.plot(epochs, data, color=color, linewidth=1.5)
+            ax.set_title(title, fontsize=11)
+            ax.set_xlabel("epoch")
+            ax.grid(True, alpha=0.3)
+            # Mark best value
+            if "mAP" in title and any(v > 0 for v in data):
+                best_idx = max(range(len(data)), key=lambda i: data[i])
+                ax.axvline(epochs[best_idx], color=color, linestyle="--", alpha=0.4)
+                ax.annotate(f"{data[best_idx]:.4f}",
+                            xy=(epochs[best_idx], data[best_idx]),
+                            fontsize=9, color=color, fontweight="bold")
+
+        plt.tight_layout()
+        fig.savefig(save_dir / "results.png", dpi=150)
+        plt.close(fig)
+        print(f"  Plots saved to {save_dir / 'results.png'}")
 
     def save_checkpoint(self, path, epoch, best_map, metrics, model, optimizer, ema, scaler):
         """Save a training checkpoint to disk.
