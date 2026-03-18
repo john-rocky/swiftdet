@@ -297,6 +297,33 @@ class DetectionTrainer:
 
         n_batches = len(train_loader)
 
+        # --- Print training configuration ---
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print("\n" + "=" * 60)
+        print("SwiftDet Training")
+        print("=" * 60)
+        print(f"  Model:          {model.__class__.__name__} "
+              f"({total_params / 1e6:.2f}M params, {trainable_params / 1e6:.2f}M trainable)")
+        print(f"  Dataset:        {len(train_dataset)} train images, "
+              f"{train_dataset.nc} classes")
+        if train_dataset.names:
+            names_preview = list(train_dataset.names.values())[:5]
+            suffix = f", ... ({train_dataset.nc} total)" if train_dataset.nc > 5 else ""
+            print(f"  Classes:        {names_preview}{suffix}")
+        print(f"  Image size:     {self.img_size}")
+        print(f"  Epochs:         {self.epochs}")
+        print(f"  Batch size:     {self.batch_size} (x{self.grad_accum} accum = "
+              f"{self.batch_size * self.grad_accum} effective)")
+        print(f"  Optimizer:      {self.optimizer_type.upper()} lr={self.lr0} → {self.lr0 * self.lrf}")
+        print(f"  AMP:            {use_amp}")
+        print(f"  Device:         {self.device}")
+        print(f"  Mosaic closing: last {self.close_mosaic} epochs")
+        print(f"  Save dir:       {self.save_dir}")
+        if self.resume and start_epoch > 0:
+            print(f"  Resumed:        epoch {start_epoch}, best mAP={best_map:.4f}")
+        print("=" * 60 + "\n")
+
         # --- Main Training Loop ---
         for epoch in range(start_epoch, self.epochs):
             model.train()
