@@ -98,6 +98,12 @@ class DetectionEvaluator:
         nc = model.nc if hasattr(model, "nc") else 80
         ap_metrics = APMetrics(nc=nc)
 
+        # Diagnostic counters
+        total_dets = 0
+        total_gts = 0
+        max_conf_seen = 0.0
+        first_batch_logged = False
+
         with torch.no_grad():
             for images, targets in tqdm(val_loader, desc="Validating", bar_format="{l_bar}{bar:20}{r_bar}"):
                 images = images.to(self.device, non_blocking=True).float()
@@ -113,6 +119,44 @@ class DetectionEvaluator:
                 # outputs['box_decoded']: (B, N, 4) xyxy format
                 # outputs['cls']: (B, N, nc) raw logits -> sigmoid for confidence
                 cls_scores = outputs["cls"].sigmoid()
+
+                # Diagnostic: log first batch stats
+                if not first_batch_logged:
+                    logits = outputs["cls"]
+                    boxes = outputs["box_decoded"]
+                    max_score = cls_scores.max().item()
+                    mean_score = cls_scores.max(dim=-1).values.mean().item()
+                    logit_range = (logits.min().item(), logits.max().item())
+                    box_range = (boxes.min().item(), boxes.max().item())
+                    above_thresh = (cls_scores.max(dim=-1).values > self.conf_thres).sum().item()
+                    total_anchors = cls_scores.shape[1]
+                    print(
+                        f"  [Eval debug] logit_range=({logit_range[0]:.2f}, {logit_range[1]:.2f})"
+                        f" max_score={max_score:.4f} mean_max_score={mean_score:.4f}"
+                        f" anchors_above_thresh={above_thresh}/{total_anchors * cls_scores.shape[0]}"
+                        f" box_range=({box_range[0]:.1f}, {box_range[1]:.1f})"
+                    )
+                    # Show sample boxes for coordinate sanity check
+                    b0_scores, b0_idx = cls_scores[0].max(dim=-1).values.topk(3)
+                    for rank, (score_val, anc_idx) in enumerate(zip(b0_scores, b0_idx)):
+                        box = boxes[0, anc_idx].tolist()
+                        cls_id = cls_scores[0, anc_idx].argmax().item()
+                        print(
+                            f"    top-{rank+1} pred: box=[{box[0]:.1f},{box[1]:.1f},"
+                            f"{box[2]:.1f},{box[3]:.1f}] cls={cls_id} score={score_val:.4f}"
+                        )
+                    # Show GT boxes for comparison
+                    gt0 = targets[0]
+                    gt0_valid = gt0[gt0[:, 1:5].sum(dim=-1) > 0]
+                    for gi in range(min(3, gt0_valid.shape[0])):
+                        gt_box = gt0_valid[gi, 1:5].tolist()
+                        gt_cls = int(gt0_valid[gi, 0].item())
+                        print(
+                            f"    gt-{gi+1}:   box=[{gt_box[0]:.1f},{gt_box[1]:.1f},"
+                            f"{gt_box[2]:.1f},{gt_box[3]:.1f}] cls={gt_cls}"
+                        )
+                    first_batch_logged = True
+
                 nms_input = torch.cat(
                     [outputs["box_decoded"], cls_scores], dim=-1
                 )  # (B, N, nc+4)
@@ -125,6 +169,15 @@ class DetectionEvaluator:
                     max_det=self.max_det,
                 )
 
+                # Track detection counts
+                for det in detections:
+                    n_det = det.shape[0]
+                    total_dets += n_det
+                    if n_det > 0:
+                        batch_max = det[:, 4].max().item()
+                        if batch_max > max_conf_seen:
+                            max_conf_seen = batch_max
+
                 # Convert targets to per-image list format for APMetrics
                 # targets: (B, max_gt, 5) where each row is [class_id, x1, y1, x2, y2]
                 batch_targets = []
@@ -133,6 +186,7 @@ class DetectionEvaluator:
                     # Filter out zero-padded entries
                     valid_mask = gt[:, 1:5].sum(dim=-1) > 0
                     gt_valid = gt[valid_mask]
+                    total_gts += gt_valid.shape[0]
                     if gt_valid.numel() > 0:
                         # Reformat to [x1, y1, x2, y2, class_id]
                         gt_reformatted = torch.cat(
@@ -144,6 +198,11 @@ class DetectionEvaluator:
 
                 # Accumulate predictions and ground truths
                 ap_metrics.update(detections, batch_targets)
+
+        print(
+            f"  [Eval summary] total_dets={total_dets} total_gts={total_gts}"
+            f" max_conf={max_conf_seen:.4f}"
+        )
 
         # Compute final mAP metrics
         results = ap_metrics.compute()
