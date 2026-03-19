@@ -283,6 +283,8 @@ class DetectionTrainer:
             batch_size=self.batch_size,
             img_size=self.img_size,
             device=str(self.device),
+            save_dir=str(self.save_dir),
+            plots=True,
         )
 
         # Resume from checkpoint if requested

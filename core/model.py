@@ -268,7 +268,8 @@ class SwiftDet:
 
     # ---- Validation ---- #
 
-    def val(self, data=None, batch=32, imgsz=640, conf=0.001, iou=0.7, **kwargs):
+    def val(self, data=None, batch=32, imgsz=640, conf=0.001, iou=0.7,
+            save_dir=None, plots=False, **kwargs):
         """Validate the model."""
         from ..engine.evaluator import DetectionEvaluator
 
@@ -276,6 +277,9 @@ class SwiftDet:
         data = data or self._data_yaml
         if data is None:
             raise ValueError("No data YAML specified. Pass data= argument.")
+
+        if plots and save_dir is None:
+            save_dir = "runs/val"
 
         evaluator = DetectionEvaluator(
             model=self.model,
@@ -285,6 +289,8 @@ class SwiftDet:
             conf_thres=conf,
             iou_thres=iou,
             device=str(dev),
+            save_dir=save_dir,
+            plots=plots,
             **kwargs,
         )
         return evaluator.evaluate()

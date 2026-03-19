@@ -23,17 +23,16 @@ from swiftdet.utils.assigner import TaskAlignedAssigner
 
 
 class DetectionLoss(nn.Module):
-    """Combined detection loss: QFL (cls) + CIoU (box) + DFL.
+    """Combined detection loss: VFL (cls) + CIoU (box) + DFL.
 
     Uses TaskAlignedAssigner for dynamic positive/negative sample assignment,
     then computes:
-      - Quality Focal Loss for classification with IoU-aware soft labels
+      - Varifocal Loss for classification with IoU-aware soft labels
       - CIoU loss for bounding box regression quality
       - Distribution Focal Loss for discrete box offset distributions
 
     References:
         - Assignment: Feng et al. 2021 (TOOD: Task-aligned One-stage Object Detection)
-        - QFL: Li et al. 2020 (Generalized Focal Loss)
         - CIoU: Zheng et al. 2019
         - DFL: Li et al. 2020 (Generalized Focal Loss)
 
@@ -58,14 +57,7 @@ class DetectionLoss(nn.Module):
         self.dfl_gain = dfl_gain
 
         # Sub-losses
-        # Quality Focal Loss (Li et al. 2020, Generalized Focal Loss) for
-        # classification.  Modulates BCE by |target - sigmoid(pred)|^gamma,
-        # which down-weights easy negatives (background with low confidence)
-        # and focuses training on hard negatives.  gamma=1.5 gives moderate
-        # focal modulation -- less aggressive than VFL (gamma=2.0) which can
-        # stall early training, but enough to handle the ~100:1
-        # foreground/background imbalance that plain BCE cannot.
-        self.qfl_gamma = 1.5
+        self.vfl = VarifocalLoss(alpha=0.75, gamma=2.0)
         self.bbox_loss = BboxLoss(reg_max)
 
         # Task-aligned assigner for dynamic label assignment
@@ -122,11 +114,8 @@ class DetectionLoss(nn.Module):
 
         target_scores_sum = max(assigned_scores.sum(), 1.0)
 
-        # --- Classification Loss (Quality Focal Loss) ---
-        p = cls_logits.detach().sigmoid()
-        modulating = (assigned_scores - p).abs().pow(self.qfl_gamma)
-        bce = F.binary_cross_entropy_with_logits(cls_logits, assigned_scores, reduction="none")
-        loss_cls = (modulating * bce).sum() / target_scores_sum
+        # --- Classification Loss (Varifocal Loss) ---
+        loss_cls = self.vfl(cls_logits, assigned_scores) / target_scores_sum
 
         # --- Box Regression Loss (CIoU + DFL) ---
         if fg_mask.any():

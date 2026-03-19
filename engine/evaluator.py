@@ -44,6 +44,8 @@ class DetectionEvaluator:
         iou_thres=0.65,
         device=None,
         max_det=300,
+        save_dir=None,
+        plots=False,
     ):
         self.model = model
         self.data_yaml = data_yaml
@@ -52,6 +54,8 @@ class DetectionEvaluator:
         self.conf_thres = conf_thres
         self.iou_thres = iou_thres
         self.max_det = max_det
+        self.save_dir = save_dir
+        self.plots = plots
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -132,8 +136,17 @@ class DetectionEvaluator:
         nc = model.nc if hasattr(model, "nc") else 80
         ap_metrics = APMetrics(nc=nc)
 
+        # Setup plotting
+        do_plot = self.plots and self.save_dir is not None
+        if do_plot:
+            from pathlib import Path
+            from swiftdet.utils.plotting import plot_batch
+            plot_dir = Path(self.save_dir)
+            plot_dir.mkdir(parents=True, exist_ok=True)
+            plot_names = val_dataset.names if hasattr(val_dataset, "names") else {}
+
         with torch.no_grad():
-            for images, targets in tqdm(val_loader, desc="Validating", bar_format="{l_bar}{bar:20}{r_bar}"):
+            for batch_idx, (images, targets) in enumerate(tqdm(val_loader, desc="Validating", bar_format="{l_bar}{bar:20}{r_bar}")):
                 images = images.to(self.device, non_blocking=True).float()
                 if images.max() > 1.0:
                     images = images / 255.0
@@ -178,6 +191,20 @@ class DetectionEvaluator:
 
                 # Accumulate predictions and ground truths
                 ap_metrics.update(detections, batch_targets)
+
+                # Save visualization for first 3 batches
+                if do_plot and batch_idx < 3:
+                    gt_boxes = [bt[:, :4].cpu().numpy() for bt in batch_targets]
+                    gt_classes = [bt[:, 4].cpu().numpy().astype(int) for bt in batch_targets]
+                    plot_batch(images, gt_boxes, gt_classes, plot_names,
+                              fname=str(plot_dir / f"val_batch{batch_idx}_labels.jpg"))
+
+                    pred_boxes = [d[:, :4].cpu().numpy() for d in detections]
+                    pred_classes = [d[:, 5].cpu().numpy().astype(int) for d in detections]
+                    pred_confs = [d[:, 4].cpu().numpy() for d in detections]
+                    plot_batch(images, pred_boxes, pred_classes, plot_names,
+                              confs=pred_confs,
+                              fname=str(plot_dir / f"val_batch{batch_idx}_pred.jpg"))
 
         # Compute final mAP metrics
         results = ap_metrics.compute()
