@@ -260,12 +260,15 @@ class DetectionTrainer:
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
         # Build training dataloader
+        # Use mosaic probability < 1.0 so some samples use standard letterbox.
+        # This ensures BN running statistics cover both data distributions
+        # (mosaic and letterbox), preventing eval-mode distribution shift.
         train_dataset = COCODetectionDataset(
             self.data_yaml,
             split="train",
             img_size=self.img_size,
             augment=True,
-            mosaic=1.0,
+            mosaic=0.9,
         )
         train_loader = torch.utils.data.DataLoader(
             train_dataset,

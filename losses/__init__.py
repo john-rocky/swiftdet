@@ -58,7 +58,10 @@ class DetectionLoss(nn.Module):
         self.dfl_gain = dfl_gain
 
         # Sub-losses
-        self.vfl = VarifocalLoss()
+        # Use BCE with logits for classification (same as YOLOv8 default).
+        # VFL's p^gamma negative weighting is too aggressive early in training,
+        # causing classification to stall when combined with mosaic augmentation.
+        self.bce = torch.nn.BCEWithLogitsLoss(reduction="none")
         self.bbox_loss = BboxLoss(reg_max)
 
         # Task-aligned assigner for dynamic label assignment
@@ -115,8 +118,8 @@ class DetectionLoss(nn.Module):
 
         target_scores_sum = max(assigned_scores.sum(), 1.0)
 
-        # --- Classification Loss (Varifocal) ---
-        loss_cls = self.vfl(cls_logits, assigned_scores)
+        # --- Classification Loss (BCE) ---
+        loss_cls = self.bce(cls_logits, assigned_scores).sum()
         loss_cls = loss_cls / target_scores_sum
 
         # --- Box Regression Loss (CIoU + DFL) ---
