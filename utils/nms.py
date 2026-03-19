@@ -97,9 +97,8 @@ def non_max_suppression(
             continue
 
         # Class-aware NMS: offset boxes by class id so that boxes from different
-        # classes never overlap.  The offset magnitude must exceed any plausible
-        # coordinate value; 4096 is a safe default for typical image sizes.
-        class_offset = cls_idx.float() * 4096.0
+        # classes never overlap. Use dynamic offset based on actual coordinate range.
+        class_offset = cls_idx.float() * (boxes.abs().max().item() + 1)
         shifted_boxes = boxes + class_offset[:, None]
 
         keep = nms_fn(shifted_boxes, conf, iou_thres)

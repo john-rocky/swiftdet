@@ -138,13 +138,11 @@ class TaskAlignedAssigner:
         if conflict_mask.any():
             # For conflicted anchors, keep only the GT with highest IoU
             best_gt = overlaps.argmax(dim=-1)  # (B, N)
-            # Zero out candidate_mask for conflicted anchors
-            conflict_indices = conflict_mask.nonzero(as_tuple=False)  # (K, 2)
-            for k in range(conflict_indices.shape[0]):
-                b_idx, n_idx = conflict_indices[k, 0], conflict_indices[k, 1]
-                g_idx = best_gt[b_idx, n_idx]
-                candidate_mask[b_idx, n_idx] = 0
-                candidate_mask[b_idx, n_idx, g_idx] = 1
+            new_mask = torch.zeros_like(candidate_mask)
+            new_mask.scatter_(2, best_gt.unsqueeze(-1), 1.0)
+            conflict_expanded = conflict_mask.unsqueeze(-1).expand_as(candidate_mask)
+            candidate_mask = torch.where(conflict_expanded, new_mask, candidate_mask)
+            candidate_mask = candidate_mask * inside_mask.float() * mask_gt_expanded.float()
 
         # --- Step 6: Build final targets ---
         fg_mask = candidate_mask.sum(dim=-1) > 0  # (B, N)

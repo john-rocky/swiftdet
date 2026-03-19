@@ -219,7 +219,7 @@ class LargeKernelBlock(nn.Module):
 
 
 class LayerNorm2d(nn.Module):
-    """Channel-last LayerNorm operating on (B, C, H, W) tensors."""
+    """LayerNorm over the channel dimension for (B, C, H, W) tensors."""
 
     def __init__(self, channels, eps=1e-6):
         super().__init__()
@@ -228,7 +228,7 @@ class LayerNorm2d(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        # x: (B, C, H, W) -> permute to (B, H, W, C) for layer norm
+        # Normalize over the channel dimension (dim=1)
         u = x.mean(dim=1, keepdim=True)
         s = (x - u).pow(2).mean(dim=1, keepdim=True)
         x = (x - u) / (s + self.eps).sqrt()

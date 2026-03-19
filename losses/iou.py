@@ -189,7 +189,7 @@ def wise_iou(box1, box2, eps=1e-7):
     r = (iou.detach() / iou_mean)
 
     # Step 4: Non-monotonic weight (stop-gradient on r)
-    weight = torch.exp((1.0 - iou) * r)
+    weight = torch.exp(((1.0 - iou) * r).clamp(max=20.0))
 
     # Step 5: WIoU loss = (1 - IoU + distance_penalty) * weight
     wiou = (1.0 - iou + distance_penalty) * weight.detach()

@@ -207,10 +207,11 @@ class DFL(nn.Module):
         super().__init__()
         self.num_bins = num_bins
         self.conv = nn.Conv2d(num_bins, 1, 1, bias=False)
-        # Initialize with fixed weights [0, 1, ..., num_bins-1]
-        x = torch.arange(num_bins, dtype=torch.float)
-        self.conv.weight = nn.Parameter(x.view(1, num_bins, 1, 1))
+        # Fixed weights [0, 1, ..., num_bins-1] -- registered as buffers (not parameters)
+        weight = torch.arange(num_bins, dtype=torch.float)
+        self.conv.weight = nn.Parameter(weight.view(1, num_bins, 1, 1))
         self.conv.weight.requires_grad = False
+        self.register_buffer("bins", weight)
 
     def forward(self, x):
         """x: (B, 4*num_bins, H, W) or (B, N, 4*num_bins)."""
@@ -219,9 +220,7 @@ class DFL(nn.Module):
             b, n, _ = x.shape
             x = x.view(b, n, 4, self.num_bins)
             x = F.softmax(x, dim=-1)
-            # Use matmul instead of conv for 3D input
-            weight = torch.arange(self.num_bins, dtype=x.dtype, device=x.device)
-            return (x * weight).sum(dim=-1)  # (B, N, 4)
+            return (x * self.bins.to(x.dtype)).sum(dim=-1)  # (B, N, 4)
         else:
             # (B, 4*num_bins, H, W) → (B, 4, H, W)
             b, _, h, w = x.shape

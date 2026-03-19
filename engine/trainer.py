@@ -7,7 +7,6 @@
 #   - Mixed precision: Micikevicius et al. 2018, "Mixed Precision Training"
 #   - EMA: Polyak & Juditsky 1992; Izmailov et al. 2018 (SWA)
 #   - Mosaic augmentation: Bochkovskiy et al. 2020 (mosaic data augmentation)
-#   - Label smoothing: Szegedy et al. 2016, "Rethinking the Inception Architecture"
 #   - Linear warmup: Goyal et al. 2017, "Accurate, Large Minibatch SGD"
 
 import csv
@@ -56,7 +55,6 @@ class DetectionTrainer:
         cls_gain: Classification loss weight (default 0.5).
         box_gain: Box regression loss weight (default 7.5).
         dfl_gain: Distribution focal loss weight (default 1.5).
-        label_smoothing: Label smoothing factor (default 0.0).
         resume: Whether to resume from latest checkpoint (default False).
         grad_accum: Gradient accumulation steps (default 1, auto-computed when batch < 64).
     """
@@ -82,7 +80,6 @@ class DetectionTrainer:
         cls_gain=0.5,
         box_gain=7.5,
         dfl_gain=1.5,
-        label_smoothing=0.0,
         resume=False,
         grad_accum=1,
     ):
@@ -104,7 +101,6 @@ class DetectionTrainer:
         self.cls_gain = cls_gain
         self.box_gain = box_gain
         self.dfl_gain = dfl_gain
-        self.label_smoothing = label_smoothing
         self.resume = resume
         self.loss_fn = DetectionLoss(
             nc=model.nc, reg_max=model.reg_max,

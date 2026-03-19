@@ -23,7 +23,6 @@ train:
   warmup_bias_lr: 0.1
   close_mosaic: 15
   amp: true
-  label_smoothing: 0.0
 
 augment:
   mosaic: 1.0
