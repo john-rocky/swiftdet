@@ -3,7 +3,7 @@
 
 from .dataset import COCODetectionDataset, ImageNetDataset, detection_collate_fn
 from .augment import MosaicAugment, MixUpAugment, CopyPasteAugment
-from .transforms import LetterBox, RandomHSV, RandomFlip, Normalize
+from .transforms import LetterBox, RandomHSV, RandomFlip, RandomErasing, Normalize
 
 __all__ = [
     "COCODetectionDataset",
@@ -15,5 +15,6 @@ __all__ = [
     "LetterBox",
     "RandomHSV",
     "RandomFlip",
+    "RandomErasing",
     "Normalize",
 ]

@@ -271,6 +271,66 @@ class Normalize:
         )
 
 
+class RandomErasing:
+    """Random Erasing augmentation (Zhong et al. 2020).
+
+    Randomly erases a rectangular region, replacing with random pixel values.
+    Labels are kept unchanged to teach the model robustness to occlusion.
+
+    Args:
+        p: Probability of erasing per image. Default 0.4.
+        sl: Minimum erasing area ratio. Default 0.02.
+        sh: Maximum erasing area ratio. Default 0.33.
+        r1: Minimum aspect ratio of erased region. Default 0.3.
+    """
+
+    def __init__(self, p=0.4, sl=0.02, sh=0.33, r1=0.3):
+        self.p = p
+        self.sl = sl
+        self.sh = sh
+        self.r1 = r1
+
+    def __call__(self, image, labels=None):
+        """Apply random erasing.
+
+        Args:
+            image: np.ndarray (H, W, 3) uint8 image.
+            labels: np.ndarray (N, 5) or None. Passed through unchanged.
+
+        Returns:
+            image: np.ndarray (H, W, 3) with erased region.
+            labels: unchanged.
+        """
+        if np.random.random() > self.p:
+            return image, labels
+
+        h, w = image.shape[:2]
+        area = h * w
+
+        for _ in range(10):
+            target_area = np.random.uniform(self.sl, self.sh) * area
+            aspect = np.exp(np.random.uniform(np.log(self.r1), np.log(1.0 / self.r1)))
+            eh = int(round(np.sqrt(target_area * aspect)))
+            ew = int(round(np.sqrt(target_area / aspect)))
+
+            if eh < h and ew < w:
+                y1 = np.random.randint(0, h - eh)
+                x1 = np.random.randint(0, w - ew)
+                image = image.copy()
+                image[y1:y1 + eh, x1:x1 + ew] = np.random.randint(
+                    0, 256, (eh, ew, 3), dtype=np.uint8
+                )
+                break
+
+        return image, labels
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}("
+            f"p={self.p}, sl={self.sl}, sh={self.sh}, r1={self.r1})"
+        )
+
+
 class Compose:
     """Compose multiple transforms sequentially.
 

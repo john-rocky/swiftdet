@@ -82,6 +82,21 @@ class DetectionTrainer:
         dfl_gain=1.5,
         resume=False,
         grad_accum=1,
+        # Augmentation parameters
+        mosaic=0.9,
+        mosaic9_prob=0.0,
+        mixup=0.0,
+        copy_paste=0.0,
+        hsv_h=0.015,
+        hsv_s=0.7,
+        hsv_v=0.4,
+        degrees=0.0,
+        translate=0.1,
+        scale=0.5,
+        shear=0.0,
+        fliplr=0.5,
+        flipud=0.0,
+        erasing=0.0,
     ):
         self.model = model
         self.data_yaml = data_yaml
@@ -102,6 +117,22 @@ class DetectionTrainer:
         self.box_gain = box_gain
         self.dfl_gain = dfl_gain
         self.resume = resume
+
+        # Augmentation parameters
+        self.aug_mosaic = mosaic
+        self.aug_mosaic9_prob = mosaic9_prob
+        self.aug_mixup = mixup
+        self.aug_copy_paste = copy_paste
+        self.aug_hsv_h = hsv_h
+        self.aug_hsv_s = hsv_s
+        self.aug_hsv_v = hsv_v
+        self.aug_degrees = degrees
+        self.aug_translate = translate
+        self.aug_scale = scale
+        self.aug_shear = shear
+        self.aug_fliplr = fliplr
+        self.aug_flipud = flipud
+        self.aug_erasing = erasing
         self.loss_fn = DetectionLoss(
             nc=model.nc, reg_max=model.reg_max,
             cls_gain=cls_gain, box_gain=box_gain, dfl_gain=dfl_gain,
@@ -259,12 +290,27 @@ class DetectionTrainer:
         # Use mosaic probability < 1.0 so some samples use standard letterbox.
         # This ensures BN running statistics cover both data distributions
         # (mosaic and letterbox), preventing eval-mode distribution shift.
+        scale_range = (1.0 - self.aug_scale, 1.0 + self.aug_scale)
+
         train_dataset = COCODetectionDataset(
             self.data_yaml,
             split="train",
             img_size=self.img_size,
             augment=True,
-            mosaic=0.9,
+            mosaic=self.aug_mosaic,
+            mosaic9_prob=self.aug_mosaic9_prob,
+            mixup=self.aug_mixup,
+            copy_paste=self.aug_copy_paste,
+            hsv_h=self.aug_hsv_h,
+            hsv_s=self.aug_hsv_s,
+            hsv_v=self.aug_hsv_v,
+            flip_h=self.aug_fliplr,
+            flip_v=self.aug_flipud,
+            degrees=self.aug_degrees,
+            translate=self.aug_translate,
+            scale=scale_range,
+            shear=self.aug_shear,
+            erasing=self.aug_erasing,
         )
         train_loader = torch.utils.data.DataLoader(
             train_dataset,

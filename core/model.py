@@ -242,13 +242,41 @@ class SwiftDet:
 
     # ---- Training ---- #
 
-    def train(self, data, epochs=500, batch=64, imgsz=640, device=None,
-              lr0=0.01, optimizer="sgd", amp=True, resume=False, **kwargs):
+    _UNSET = object()
+
+    def train(self, data, epochs=_UNSET, batch=_UNSET, imgsz=_UNSET, device=None,
+              lr0=_UNSET, optimizer=_UNSET, amp=_UNSET, resume=False, **kwargs):
         """Train the model on a detection dataset."""
         from ..engine.trainer import DetectionTrainer
 
         dev = self._to_device(device)
         self._data_yaml = data
+
+        train_cfg = self.cfg.get("train", {})
+
+        # Resolve explicit params: user arg > YAML train > hardcoded default
+        epochs = train_cfg.get("epochs", 500) if epochs is self._UNSET else epochs
+        batch = train_cfg.get("batch_size", 64) if batch is self._UNSET else batch
+        imgsz = train_cfg.get("img_size", 640) if imgsz is self._UNSET else imgsz
+        lr0 = train_cfg.get("lr0", 0.01) if lr0 is self._UNSET else lr0
+        optimizer = train_cfg.get("optimizer", "sgd") if optimizer is self._UNSET else optimizer
+        amp = train_cfg.get("amp", True) if amp is self._UNSET else amp
+
+        # Merge remaining train params (lrf, momentum, weight_decay, etc.)
+        _explicit_keys = {"epochs", "batch_size", "img_size", "lr0", "optimizer", "amp", "device"}
+        for key, val in train_cfg.items():
+            if key not in _explicit_keys and key not in kwargs:
+                kwargs[key] = val
+
+        # Merge augmentation config
+        for key, val in self.cfg.get("augment", {}).items():
+            if key not in kwargs:
+                kwargs[key] = val
+
+        # Merge loss config
+        for key, val in self.cfg.get("loss", {}).items():
+            if key not in kwargs:
+                kwargs[key] = val
 
         trainer = DetectionTrainer(
             model=self.model,

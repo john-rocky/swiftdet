@@ -19,7 +19,7 @@ try:
 except ImportError:
     yaml = None
 
-from .transforms import LetterBox, RandomHSV, RandomFlip, Normalize, Compose
+from .transforms import LetterBox, RandomHSV, RandomFlip, RandomErasing, Normalize, Compose
 from .augment import MosaicAugment, MixUpAugment, CopyPasteAugment
 
 
@@ -146,6 +146,7 @@ class COCODetectionDataset(Dataset):
         translate=0.1,
         scale=(0.5, 1.5),
         shear=0.0,
+        erasing=0.0,
         mixup_alpha=1.5,
         cache_images=False,
         mean=None,
@@ -203,6 +204,7 @@ class COCODetectionDataset(Dataset):
         self.img_size = img_size
         self.augment = augment
         self.mosaic_prob = mosaic
+        self._orig_mosaic_prob = mosaic
         self.mixup_prob = mixup
         self.copy_paste_prob = copy_paste
 
@@ -238,6 +240,8 @@ class COCODetectionDataset(Dataset):
         if augment:
             aug_transforms.append(RandomHSV(h_gain=hsv_h, s_gain=hsv_s, v_gain=hsv_v))
             aug_transforms.append(RandomFlip(p_horizontal=flip_h, p_vertical=flip_v))
+            if erasing > 0:
+                aug_transforms.append(RandomErasing(p=erasing))
         aug_transforms.append(Normalize(mean=mean, std=std))
         self.transforms = Compose(aug_transforms)
 
@@ -384,7 +388,7 @@ class COCODetectionDataset(Dataset):
 
     def set_mosaic(self, enabled):
         """Enable or disable mosaic augmentation (for mosaic closing)."""
-        self.mosaic_prob = 1.0 if enabled else 0.0
+        self.mosaic_prob = self._orig_mosaic_prob if enabled else 0.0
 
     def get_num_classes(self):
         """Return the number of object classes."""
