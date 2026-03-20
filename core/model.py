@@ -425,6 +425,10 @@ class SwiftDet:
                     paths.append(str(f))
             return images, paths
 
+        # File path that doesn't exist → clear error
+        if p.suffix.lower() in _IMG_EXTENSIONS | _VID_EXTENSIONS:
+            raise FileNotFoundError(f"File not found: {source}")
+
         raise ValueError(f"Unsupported source type: {source}")
 
     @staticmethod

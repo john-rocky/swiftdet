@@ -26,7 +26,7 @@ train:
   amp: true
 
 augment:
-  mosaic: 1.0
+  mosaic: 0.9
   mosaic9_prob: 0.2
   mixup: 0.15
   copy_paste: 0.1

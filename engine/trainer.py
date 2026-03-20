@@ -649,7 +649,7 @@ class DetectionTrainer:
             "epoch": epoch,
             "best_map": best_map,
             "metrics": metrics,
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": ema.ema_model.state_dict() if "best" in str(path) else model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "ema_state_dict": ema.state_dict(),
             "scaler_state_dict": scaler.state_dict(),
