@@ -20,6 +20,14 @@ from .blocks import ConvBnAct
 from .blocks_v2 import AreaAttention, RepConv, RepCSPBlock, SPP
 
 
+def _auto_heads(channels, min_head_dim=32):
+    """Compute num_heads so that head_dim >= min_head_dim."""
+    heads = 1
+    while heads * 2 * min_head_dim <= channels:
+        heads *= 2
+    return heads
+
+
 class ModernBackbone(nn.Module):
     """SwiftDet2 backbone combining RepConv, RepCSP, and AreaAttention.
 
@@ -67,21 +75,21 @@ class ModernBackbone(nn.Module):
         self.stage2 = nn.Sequential(
             RepConv(c[1], c[2], 3, stride=2),
             RepCSPBlock(c[2], c[2], n=d[1]),
-            AreaAttention(c[2]),
+            AreaAttention(c[2], num_heads=_auto_heads(c[2])),
         )
 
         # Stage 3: P4/16 -- with AreaAttention
         self.stage3 = nn.Sequential(
             RepConv(c[2], c[3], 3, stride=2),
             RepCSPBlock(c[3], c[3], n=d[2]),
-            AreaAttention(c[3]),
+            AreaAttention(c[3], num_heads=_auto_heads(c[3])),
         )
 
         # Stage 4: P5/32 -- with AreaAttention
         self.stage4 = nn.Sequential(
             RepConv(c[3], c[4], 3, stride=2),
             RepCSPBlock(c[4], c[4], n=d[3]),
-            AreaAttention(c[4]),
+            AreaAttention(c[4], num_heads=_auto_heads(c[4])),
         )
 
         # SPP at the end of stage 4

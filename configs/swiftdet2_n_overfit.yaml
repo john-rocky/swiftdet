@@ -12,13 +12,13 @@ train:
   epochs: 100
   batch_size: 16
   img_size: 640
-  lr0: 0.01
+  lr0: 0.002
   lrf: 0.01
-  optimizer: sgd
+  optimizer: adamw
   momentum: 0.937
   weight_decay: 0.0005
   warmup_epochs: 3
-  warmup_bias_lr: 0.1
+  warmup_bias_lr: 0.02
   close_mosaic: 10
   amp: true
 
