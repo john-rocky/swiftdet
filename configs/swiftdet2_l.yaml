@@ -15,7 +15,7 @@ train:
   epochs: 500
   batch_size: 64
   img_size: 640
-  lr0: 0.01
+  lr0: 0.004
   lrf: 0.01
   optimizer: adamw
   momentum: 0.937
