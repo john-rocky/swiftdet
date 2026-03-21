@@ -99,23 +99,13 @@ class VarifocalLoss(nn.Module):
             Scalar loss (sum over all elements).
         """
         p = pred.sigmoid()
-
-        # Binary cross-entropy components (numerically stable via log-sum-exp)
-        # log(p) = pred - softplus(pred), log(1-p) = -softplus(pred)
-        log_p = F.logsigmoid(pred)
-        log_one_minus_p = F.logsigmoid(-pred)
-
-        # Positive mask (q > 0)
         pos_mask = (target > 0).float()
 
-        # Positive loss: -q * log(p)  weighted by q (quality-aware)
-        pos_loss = -target * log_p
+        # Weight: positives weighted by target IoU quality, negatives by focal term
+        neg_weight = self.alpha * p.detach().pow(self.gamma)
+        weight = pos_mask * target + (1.0 - pos_mask) * neg_weight
 
-        # Negative loss: -alpha * p^gamma * log(1 - p)
-        neg_weight = self.alpha * p.detach().abs().pow(self.gamma)
-        neg_loss = -neg_weight * log_one_minus_p
-
-        # Combine: positives use pos_loss, negatives use neg_loss
-        loss = pos_mask * pos_loss + (1.0 - pos_mask) * neg_loss
+        # Quality-weighted BCE: positive loss minimum is at p=target (not p=1)
+        loss = F.binary_cross_entropy_with_logits(pred, target, reduction="none") * weight
 
         return loss.sum()

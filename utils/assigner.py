@@ -180,7 +180,7 @@ class TaskAlignedAssigner:
             iou_max_gathered = max_iou_per_gt[gt_idx].clamp(min=1e-7)
 
             norm_am = (am_values / am_max_gathered) * iou_max_gathered
-            norm_am = norm_am.clamp(min=0)
+            norm_am = norm_am.clamp(min=0.01)
             target_scores[b][fg] = one_hot * norm_am.unsqueeze(-1)
 
         return target_labels, target_bboxes, target_scores, fg_mask
