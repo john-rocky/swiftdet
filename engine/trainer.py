@@ -145,9 +145,14 @@ class DetectionTrainer:
         else:
             self.grad_accum = grad_accum
 
-        # Resolve device
+        # Resolve device (CUDA > MPS > CPU)
         if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = torch.device("cpu")
         else:
             self.device = torch.device(device)
 
@@ -282,9 +287,9 @@ class DetectionTrainer:
         optimizer = self._build_optimizer()
         ema = ModelEMA(model, decay=0.9999, warmup_steps=2000)
 
-        # AMP scaler (handles both CUDA and CPU gracefully)
-        use_amp = self.amp and self.device.type == "cuda"
-        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+        # AMP: autocast on CUDA and MPS; GradScaler only on CUDA
+        use_amp = self.amp and self.device.type in ("cuda", "mps")
+        scaler = torch.amp.GradScaler("cuda", enabled=(use_amp and self.device.type == "cuda"))
 
         # Build training dataloader
         # Use mosaic probability < 1.0 so some samples use standard letterbox.
@@ -317,7 +322,7 @@ class DetectionTrainer:
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=min(8, os.cpu_count() or 1),
-            pin_memory=self.device.type == "cuda",
+            pin_memory=self.device.type in ("cuda", "mps"),
             collate_fn=detection_collate_fn,
             drop_last=True,
         )
@@ -432,7 +437,7 @@ class DetectionTrainer:
                 targets = targets.to(self.device, non_blocking=True)
 
                 # Forward pass with optional AMP
-                with torch.amp.autocast("cuda", enabled=use_amp):
+                with torch.amp.autocast(self.device.type, enabled=use_amp):
                     outputs = model(images)
                     loss, loss_dict = self._compute_loss(outputs, targets)
                     loss = loss / self.grad_accum
@@ -464,7 +469,12 @@ class DetectionTrainer:
                 running_cls = epoch_losses["cls_loss"] / n
                 running_box = epoch_losses["box_loss"] / n
                 running_dfl = epoch_losses["dfl_loss"] / n
-                mem = f"{torch.cuda.memory_reserved(self.device) / 1e9:.1f}G" if self.device.type == "cuda" else ""
+                if self.device.type == "cuda":
+                    mem = f"{torch.cuda.memory_reserved(self.device) / 1e9:.1f}G"
+                elif self.device.type == "mps":
+                    mem = "MPS"
+                else:
+                    mem = ""
                 pbar.set_postfix_str(
                     f"cls={running_cls:.4f} box={running_box:.4f} dfl={running_dfl:.4f} "
                     f"lr={optimizer.param_groups[0]['lr']:.2e} {mem}"

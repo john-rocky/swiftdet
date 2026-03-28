@@ -107,7 +107,12 @@ class DistillationTrainer:
         self.dfl_gain = dfl_gain
 
         if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = torch.device("cpu")
         else:
             self.device = torch.device(device)
 
@@ -276,9 +281,9 @@ class DistillationTrainer:
         optimizer = self._build_optimizer()
         ema = ModelEMA(student, decay=0.9999, warmup_steps=2000)
 
-        # AMP scaler
-        use_amp = self.amp and self.device.type == "cuda"
-        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+        # AMP: autocast on CUDA and MPS; GradScaler only on CUDA
+        use_amp = self.amp and self.device.type in ("cuda", "mps")
+        scaler = torch.amp.GradScaler("cuda", enabled=(use_amp and self.device.type == "cuda"))
 
         # Build distillation loss modules
         # Determine channel dimensions for feature distillation adaptation layers
@@ -309,7 +314,7 @@ class DistillationTrainer:
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=min(8, os.cpu_count() or 1),
-            pin_memory=self.device.type == "cuda",
+            pin_memory=self.device.type in ("cuda", "mps"),
             collate_fn=detection_collate_fn,
             drop_last=True,
         )
@@ -360,7 +365,7 @@ class DistillationTrainer:
                     images = images / 255.0
                 targets = targets.to(self.device, non_blocking=True)
 
-                with torch.amp.autocast("cuda", enabled=use_amp):
+                with torch.amp.autocast(self.device.type, enabled=use_amp):
                     # Forward pass through both teacher and student with features
                     with torch.no_grad():
                         teacher_outputs, teacher_neck_feats = self._forward_with_features(

@@ -58,7 +58,12 @@ class DetectionEvaluator:
         self.plots = plots
 
         if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = torch.device("cpu")
         else:
             self.device = torch.device(device)
 
@@ -123,7 +128,7 @@ class DetectionEvaluator:
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=min(8, os.cpu_count() or 1),
-            pin_memory=self.device.type == "cuda",
+            pin_memory=self.device.type in ("cuda", "mps"),
             collate_fn=detection_collate_fn,
             drop_last=False,
         )
